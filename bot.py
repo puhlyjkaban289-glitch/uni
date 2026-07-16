@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import io
 import logging
 import os
@@ -14,7 +15,7 @@ logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not BOT_TOKEN:
-    sys.exit("Нет токена")
+    sys.exit("ГЌГҐГІ ГІГ®ГЄГҐГ­Г ")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -34,7 +35,7 @@ def apply_exif(image_bytes: bytes) -> bytes:
 
 @dp.message(CommandStart())
 async def start(message: Message):
-    await message.answer("Отправь фото")
+    await message.answer("ГЋГІГЇГ°Г ГўГј ГґГ®ГІГ®")
 
 
 @dp.message(F.photo | F.document)
