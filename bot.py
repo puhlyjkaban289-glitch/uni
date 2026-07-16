@@ -14,8 +14,10 @@ Telegram-бот для "приватизации" фото:
 
 import io
 import logging
+import os
 import random
 import string
+import sys
 from datetime import datetime, timedelta
 
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
@@ -28,7 +30,15 @@ from aiogram.types import Message, BufferedInputFile
 logging.basicConfig(level=logging.INFO)
 
 # ==== НАСТРОЙКИ ====
-BOT_TOKEN = "PUT_YOUR_BOT_TOKEN_HERE"
+# Токен НИКОГДА не хранится в коде. Задайте переменную окружения
+# TELEGRAM_BOT_TOKEN (в Railway: Settings -> Variables) со значением
+# токена от @BotFather.
+BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+if not BOT_TOKEN:
+    sys.exit(
+        "Не найдена переменная окружения TELEGRAM_BOT_TOKEN. "
+        "Задайте её со значением токена от @BotFather перед запуском."
+    )
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
