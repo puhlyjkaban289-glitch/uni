@@ -240,7 +240,7 @@ def create_fake_exif(make: str, model: str, lat: float, lon: float) -> bytes:
         return piexif.dump(minimal)
 
 # ==================== ОБРАБОТКА ФОТО ====================
-def process_photo(file_bytes: bytes) -> Tuple[bytes, Dict]:
+def process_photo(file_bytes: bytes) -> Tuple[bytes, Dict, str]:
     """
     Основная функция обработки:
     - Уникализация
@@ -280,7 +280,30 @@ def process_photo(file_bytes: bytes) -> Tuple[bytes, Dict]:
         "lon": round(lon, 6),
         "software": get_random_software(make),
     }
-    return processed_bytes, meta
+
+    # Генерируем имя файла в стиле настоящего телефона
+    filename = generate_phone_filename(make)
+
+    return processed_bytes, meta, filename
+
+
+def generate_phone_filename(make: str) -> str:
+    """Генерирует имя файла в стиле, как сохраняет телефон"""
+    import random
+
+    dt = datetime.now() - timedelta(minutes=random.randint(5, 180))
+    date_str = dt.strftime("%Y%m%d_%H%M%S")
+
+    if make == "Apple":
+        # Настоящий стиль iPhone — IMG_ + 4-значный номер
+        number = random.randint(1000, 9999)
+        return f"IMG_{number}.JPG"
+    elif make == "Google":
+        return f"PXL_{date_str}.jpg"
+    else:
+        # Samsung, Xiaomi, Huawei, OnePlus, Sony и большинство Android
+        return f"IMG_{date_str}.jpg"
+
 
 # ==================== TELEGRAM HANDLERS ====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -377,7 +400,7 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         file_bytes = await file.download_as_bytearray()
 
         # Обрабатываем (синхронно, т.к. быстро)
-        processed_bytes, meta = process_photo(bytes(file_bytes))
+        processed_bytes, meta, filename = process_photo(bytes(file_bytes))
 
         # Готовим подпись
         caption = (
@@ -386,12 +409,15 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             f"📍 <b>Координаты:</b> {meta['lat']}, {meta['lon']}\n"
             f"🕒 <b>Дата EXIF:</b> (сгенерирована недавно)\n"
             f"🔧 <b>Software:</b> {meta['software']}\n\n"
+            f"📎 Отправлено как файл, чтобы сохранить EXIF-метаданные\n"
             f"🔒 Оригинальные EXIF удалены • Фото уникализировано"
         )
 
-        # Отправляем обратно как фото
-        await message.reply_photo(
-            photo=io.BytesIO(processed_bytes),
+        # Отправляем как документ (файл), а не как фото —
+        # Telegram не будет пересжимать и стирать наш поддельный EXIF
+        await message.reply_document(
+            document=io.BytesIO(processed_bytes),
+            filename=filename,
             caption=caption,
             parse_mode="HTML",
         )
