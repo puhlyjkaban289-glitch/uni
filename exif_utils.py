@@ -11,15 +11,9 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 def load_device():
     devices_dir = os.path.join(BASE_DIR, "devices")
 
-    if not os.path.exists(devices_dir):
-        raise FileNotFoundError("devices folder not found")
-
     files = [f for f in os.listdir(devices_dir) if f.endswith(".csv")]
-
-    if not files:
-        raise ValueError("no csv files in devices folder")
-
     file = random.choice(files)
+
     path = os.path.join(devices_dir, file)
 
     devices = []
@@ -30,13 +24,8 @@ def load_device():
             manufacturer = row.get("manufacturer")
             model = row.get("model")
 
-            if not manufacturer or not model:
-                continue
-
-            devices.append((manufacturer, model))
-
-    if not devices:
-        raise ValueError("device list is empty")
+            if manufacturer and model:
+                devices.append((manufacturer, model))
 
     return random.choice(devices)
 
