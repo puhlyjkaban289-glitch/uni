@@ -6,7 +6,6 @@ import random
 import logging
 from datetime import datetime, timedelta
 
-import numpy as np
 from PIL import Image, ImageOps
 import piexif
 
