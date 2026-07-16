@@ -1,4 +1,3 @@
-aiogram==3.4.1
-Pillow==10.3.0
-piexif==1.1.3
-numpy==1.26.4
+aiogram==2.25.1
+pillow
+piexif
