@@ -1,187 +1,119 @@
-import io
 import os
-import random
+import time
+import telebot
 import csv
-import string
-from datetime import datetime, timedelta
+import random
 
-from PIL import Image
-import piexif
-
+TOKEN = os.getenv("BOT_TOKEN")  # токен через Railway Variables
+bot = telebot.TeleBot(TOKEN)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-
-# ===== CSV =====
-
-def load_models(file):
-    models = []
-    with open(os.path.join(BASE_DIR, file), newline='', encoding='utf-8') as f:
-        reader = csv.reader(f)
-        for row in reader:
-            if row:
-                models.append(row[0].strip())
-    return models
-
-
-APPLE = load_models("apple.csv")
-SAMSUNG = load_models("samsung.csv")
-XIAOMI = load_models("xiaomi.csv")
-GOOGLE = load_models("google.csv")
-
-BRANDS = {
-    "Apple": APPLE,
-    "Samsung": SAMSUNG,
-    "Xiaomi": XIAOMI,
-    "Google": GOOGLE,
-}
-
-
+# =========================
+# 📍 Загрузка координат
+# =========================
 def load_coords():
     coords = []
-    with open(os.path.join(BASE_DIR, "coords.csv"), newline='', encoding='utf-8') as f:
+    path = os.path.join(BASE_DIR, "coords.csv")
+
+    if not os.path.exists(path):
+        print("⚠️ coords.csv НЕ найден")
+        return [(55.7558, 37.6173)]
+
+    with open(path, newline='', encoding='utf-8') as f:
         reader = csv.reader(f)
+        next(reader, None)  # пропуск заголовка
+
         for row in reader:
-            if len(row) >= 2:
+            try:
                 coords.append((float(row[0]), float(row[1])))
-    return coords
+            except:
+                continue
+
+    return coords if coords else [(55.7558, 37.6173)]
 
 
 COORDS = load_coords()
 
+# =========================
+# 📱 Загрузка устройств
+# =========================
+def load_devices():
+    brands = {}
 
-# ===== ВСПОМОГАТЕЛЬНОЕ =====
+    files = {
+        "Apple": "apple.csv",
+        "Samsung": "samsung.csv",
+        "Xiaomi": "xiaomi.csv",
+        "Google": "google.csv"
+    }
 
-def random_datetime():
-    return datetime.now() - timedelta(
-        days=random.randint(0, 365),
-        hours=random.randint(0, 23),
-        minutes=random.randint(0, 59),
-        seconds=random.randint(0, 59)
-    )
+    for brand, filename in files.items():
+        path = os.path.join(BASE_DIR, filename)
+
+        if not os.path.exists(path):
+            print(f"⚠️ нет файла {filename}")
+            continue
+
+        with open(path, newline='', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            models = [row[0] for row in reader if row]
+
+            if models:
+                brands[brand] = models
+
+    return brands
 
 
-def deg_to_dms_rational(deg_float):
-    deg = int(deg_float)
-    min_float = abs((deg_float - deg) * 60)
-    minute = int(min_float)
-    sec = int((min_float - minute) * 60 * 100)
-    return ((abs(deg), 1), (minute, 1), (sec, 100))
+DEVICES = load_devices()
 
-
+# =========================
+# 🎲 Генерация устройства
+# =========================
 def random_device():
-    brand = random.choice(list(BRANDS.keys()))
-    model = random.choice(BRANDS[brand])
+    brand = random.choice(list(DEVICES.keys()))
+    model = random.choice(DEVICES[brand])
     return brand, model
 
 
-# ===== СЕРИЙНИКИ =====
-
-def random_serial(brand):
-    if brand == "Apple":
-        # Пример: C02ZQ0ABCDE
-        return random.choice(string.ascii_uppercase) + \
-               random.choice(string.digits) + \
-               random.choice(string.ascii_uppercase) + \
-               ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-
-    elif brand == "Samsung":
-        # Пример: R58N123ABC
-        return "R" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
-
-    elif brand == "Xiaomi":
-        # Пример: 12345/ABCDEF12
-        return ''.join(random.choices(string.digits, k=5)) + "/" + \
-               ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-
-    elif brand == "Google":
-        # Пример: G9ABC123XYZ
-        return "G" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
-
-    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=12))
+# =========================
+# 🤖 БОТ
+# =========================
+@bot.message_handler(commands=['start'])
+def start(msg):
+    bot.send_message(msg.chat.id, "📸 Пришли фото — добавлю метаданные")
 
 
-def random_image_id():
-    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=32))
-
-
-def random_gps():
+@bot.message_handler(content_types=['photo'])
+def handle_photo(msg):
+    brand, model = random_device()
     lat, lon = random.choice(COORDS)
 
-    return {
-        piexif.GPSIFD.GPSLatitudeRef: 'N' if lat >= 0 else 'S',
-        piexif.GPSIFD.GPSLatitude: deg_to_dms_rational(lat),
-        piexif.GPSIFD.GPSLongitudeRef: 'E' if lon >= 0 else 'W',
-        piexif.GPSIFD.GPSLongitude: deg_to_dms_rational(lon),
-    }
+    text = f"""📱 Устройство:
+{brand} {model}
+
+📍 Координаты:
+{lat}, {lon}
+"""
+
+    bot.send_message(msg.chat.id, text)
+
+    # 👉 тут вставишь свой EXIF код
 
 
-# ===== EXIF =====
+# =========================
+# 🚀 ЗАПУСК (ВАЖНО!)
+# =========================
+def run():
+    print("🚀 Бот запущен")
 
-def generate_exif():
-    brand, model = random_device()
-    dt = random_datetime()
-
-    dt_str = dt.strftime("%Y:%m:%d %H:%M:%S")
-
-    serial = random_serial(brand)
-
-    zeroth_ifd = {
-        piexif.ImageIFD.Make: brand.encode(),
-        piexif.ImageIFD.Model: model.encode(),
-        piexif.ImageIFD.Software: b"Camera",
-        piexif.ImageIFD.DateTime: dt_str.encode(),
-    }
-
-    exif_ifd = {
-        piexif.ExifIFD.DateTimeOriginal: dt_str.encode(),
-        piexif.ExifIFD.DateTimeDigitized: dt_str.encode(),
-        piexif.ExifIFD.LensMake: brand.encode(),
-        piexif.ExifIFD.LensModel: model.encode(),
-
-        # 📸 камера
-        piexif.ExifIFD.FNumber: (random.randint(17, 22), 10),
-        piexif.ExifIFD.ExposureTime: (1, random.randint(30, 500)),
-        piexif.ExifIFD.ISOSpeedRatings: random.choice([50, 100, 200, 400]),
-        piexif.ExifIFD.FocalLength: (random.randint(3, 7), 1),
-
-        # 🔥 серийники
-        piexif.ExifIFD.BodySerialNumber: serial.encode(),
-        piexif.ExifIFD.ImageUniqueID: random_image_id().encode(),
-    }
-
-    gps_ifd = random_gps()
-
-    exif_dict = {
-        "0th": zeroth_ifd,
-        "Exif": exif_ifd,
-        "GPS": gps_ifd,
-    }
-
-    return piexif.dump(exif_dict)
+    while True:
+        try:
+            bot.infinity_polling(timeout=60, long_polling_timeout=60)
+        except Exception as e:
+            print("❌ Ошибка:", e)
+            time.sleep(5)
 
 
-# ===== ОБРАБОТКА =====
-
-def process_image(raw_bytes: bytes) -> bytes:
-    img = Image.open(io.BytesIO(raw_bytes))
-    img = img.convert("RGB")
-
-    # удаляем ВСЁ
-    data = list(img.getdata())
-    clean = Image.new(img.mode, img.size)
-    clean.putdata(data)
-
-    exif_bytes = generate_exif()
-
-    out = io.BytesIO()
-    clean.save(out, "jpeg", quality=95, exif=exif_bytes)
-
-    return out.getvalue()
-
-
-# ===== ИМЯ ФАЙЛА =====
-
-def random_phone_filename():
-    dt = random_datetime()
-    return f"IMG_{dt.strftime('%Y%m%d_%H%M%S')}.jpg"
+if __name__ == "__main__":
+    run()
