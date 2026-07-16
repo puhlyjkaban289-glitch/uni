@@ -1,10 +1,12 @@
+import asyncio
 import logging
 import random
 from io import BytesIO
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import Message
-from aiogram.utils import executor
+from aiogram.filters import CommandStart
+from aiogram.enums import ContentType
 
 from PIL import Image
 from exif_utils import generate_exif
@@ -14,7 +16,7 @@ API_TOKEN = "YOUR_BOT_TOKEN"
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=API_TOKEN)
-dp = Dispatcher(bot)
+dp = Dispatcher()
 
 
 def get_random_coords():
@@ -39,14 +41,17 @@ def apply_exif(image_bytes, lat, lon):
     return output.getvalue()
 
 
-@dp.message_handler(content_types=['photo'])
+@dp.message(CommandStart())
+async def start(message: Message):
+    await message.answer("Send photo")
+
+
+@dp.message(lambda message: message.content_type == ContentType.PHOTO)
 async def handler(message: Message):
     photo = message.photo[-1]
 
     file = await bot.get_file(photo.file_id)
-    file_path = file.file_path
-
-    downloaded = await bot.download_file(file_path)
+    downloaded = await bot.download_file(file.file_path)
 
     image_bytes = downloaded.read()
 
@@ -57,5 +62,9 @@ async def handler(message: Message):
     await message.answer_photo(result)
 
 
+async def main():
+    await dp.start_polling(bot)
+
+
 if __name__ == "__main__":
-    executor.start_polling(dp, skip_updates=True)
+    asyncio.run(main())
