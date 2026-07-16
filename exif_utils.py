@@ -1,60 +1,41 @@
-# -*- coding: utf-8 -*-
-
-import os
 import random
-import csv
 import piexif
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-
-def load_device():
-    devices_dir = os.path.join(BASE_DIR, "devices")
-
-    files = [f for f in os.listdir(devices_dir) if f.endswith(".csv")]
-    file = random.choice(files)
-
-    path = os.path.join(devices_dir, file)
-
-    devices = []
-
-    with open(path, newline='', encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            manufacturer = row.get("manufacturer")
-            model = row.get("model")
-
-            if manufacturer and model:
-                devices.append((manufacturer, model))
-
-    return random.choice(devices)
+from datetime import datetime
 
 
-def deg_to_dms(deg):
-    d = int(deg)
-    m = int((deg - d) * 60)
-    s = round((deg - d - m / 60) * 3600 * 100)
-
+def to_deg(value):
+    d = int(value)
+    m = int((value - d) * 60)
+    s = int(((value - d) * 60 - m) * 60 * 100)
     return ((d, 1), (m, 1), (s, 100))
 
 
 def generate_exif(lat, lon):
-    manufacturer, model = load_device()
+    now = datetime.now().strftime("%Y:%m:%d %H:%M:%S")
 
     zeroth_ifd = {
-        piexif.ImageIFD.Make: manufacturer.encode(),
-        piexif.ImageIFD.Model: model.encode(),
+        piexif.ImageIFD.Make: "Apple",
+        piexif.ImageIFD.Model: "iPhone 13",
+        piexif.ImageIFD.Software: "iOS 17.0",
+        piexif.ImageIFD.DateTime: now,
+    }
+
+    exif_ifd = {
+        piexif.ExifIFD.DateTimeOriginal: now,
+        piexif.ExifIFD.LensMake: "Apple",
+        piexif.ExifIFD.LensModel: "iPhone 13 back camera 5.1mm f/1.6",
     }
 
     gps_ifd = {
-        piexif.GPSIFD.GPSLatitudeRef: b'N' if lat >= 0 else b'S',
-        piexif.GPSIFD.GPSLatitude: deg_to_dms(abs(lat)),
-        piexif.GPSIFD.GPSLongitudeRef: b'E' if lon >= 0 else b'W',
-        piexif.GPSIFD.GPSLongitude: deg_to_dms(abs(lon)),
+        piexif.GPSIFD.GPSLatitudeRef: "N" if lat >= 0 else "S",
+        piexif.GPSIFD.GPSLatitude: to_deg(abs(lat)),
+        piexif.GPSIFD.GPSLongitudeRef: "E" if lon >= 0 else "W",
+        piexif.GPSIFD.GPSLongitude: to_deg(abs(lon)),
     }
 
     exif_dict = {
         "0th": zeroth_ifd,
+        "Exif": exif_ifd,
         "GPS": gps_ifd,
     }
 
