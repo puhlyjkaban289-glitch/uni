@@ -1,7 +1,8 @@
 import os
-import time
 import telebot
-import csv
+import piexif
+from PIL import Image
+from io import BytesIO
 import random
 
 TOKEN = os.getenv("BOT_TOKEN")  # токен через Railway Variables
@@ -90,24 +91,73 @@ def random_device():
 def start(msg):
     bot.send_message(msg.chat.id, "📸 Пришли фото — добавлю метаданные")
 
+# =========================
+# 📍 GPS → EXIF формат
+# =========================
+def to_deg(value):
+    d = int(value)
+    m = int((value - d) * 60)
+    s = int(((value - d) * 60 - m) * 60 * 100)
+    return ((d,1),(m,1),(s,100))
 
+
+def make_exif(brand, model, lat, lon):
+    zeroth_ifd = {
+        piexif.ImageIFD.Make: brand.encode(),
+        piexif.ImageIFD.Model: model.encode(),
+    }
+
+    gps_ifd = {
+        piexif.GPSIFD.GPSLatitudeRef: b'N' if lat >= 0 else b'S',
+        piexif.GPSIFD.GPSLatitude: to_deg(abs(lat)),
+        piexif.GPSIFD.GPSLongitudeRef: b'E' if lon >= 0 else b'W',
+        piexif.GPSIFD.GPSLongitude: to_deg(abs(lon)),
+    }
+
+    exif_dict = {"0th": zeroth_ifd, "GPS": gps_ifd}
+    return piexif.dump(exif_dict)
+
+# =========================
+# 🤖 ОБРАБОТКА ФОТО
+# =========================
 @bot.message_handler(content_types=['photo'])
 def handle_photo(msg):
-    brand, model = random_device()
-    lat, lon = random.choice(COORDS)
+    try:
+        # 📥 скачать фото
+        file_info = bot.get_file(msg.photo[-1].file_id)
+        file_bytes = bot.download_file(file_info.file_path)
 
-    text = f"""📱 Устройство:
+        image = Image.open(BytesIO(file_bytes)).convert("RGB")
+
+        # 🎲 данные
+        brand, model = random_device()
+        lat = round(random.uniform(-90, 90), 6)
+        lon = round(random.uniform(-180, 180), 6)
+
+        # 🧠 EXIF
+        exif_bytes = make_exif(brand, model, lat, lon)
+
+        # 💾 сохранить в память
+        output = BytesIO()
+        image.save(output, format="JPEG", exif=exif_bytes)
+        output.seek(0)
+
+        caption = f"""📱 Устройство:
 {brand} {model}
 
 📍 Координаты:
 {lat}, {lon}
 """
 
-    bot.send_message(msg.chat.id, text)
+        # 📤 ОТПРАВКА ФОТО (ВАЖНО!)
+        bot.send_photo(
+            msg.chat.id,
+            photo=output,
+            caption=caption
+        )
 
-    # 👉 тут вставишь свой EXIF код
-
-
+    except Exception as e:
+        bot.send_message(msg.chat.id, f"Ошибка: {e}")
 # =========================
 # 🚀 ЗАПУСК (ВАЖНО!)
 # =========================
