@@ -400,7 +400,23 @@ def main() -> None:
     """Запуск бота"""
     logger.info("Запуск Telegram EXIF Spoofer Bot...")
 
-    application = Application.builder().token(TOKEN).build()
+    # Улучшенный HTTPXRequest с повышенными таймаутами (решает TimedOut на Railway)
+    from telegram.request import HTTPXRequest
+
+    request = HTTPXRequest(
+        connection_pool_size=20,
+        connect_timeout=60.0,
+        read_timeout=60.0,
+        write_timeout=60.0,
+        pool_timeout=60.0,
+    )
+
+    application = (
+        Application.builder()
+        .token(TOKEN)
+        .request(request)
+        .build()
+    )
 
     # Команды
     application.add_handler(CommandHandler("start", start))
