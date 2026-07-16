@@ -16,9 +16,11 @@ from aiogram.types import Message, BufferedInputFile
 
 logging.basicConfig(level=logging.INFO)
 
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
 if not BOT_TOKEN:
-    sys.exit("Нет TELEGRAM_BOT_TOKEN")
+    print("❌ TELEGRAM_BOT_TOKEN не задан")
+    sys.exit(1)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -30,15 +32,20 @@ def load_coords(path="coords.csv"):
     coords = []
 
     if not os.path.exists(path):
-        raise FileNotFoundError(f"Файл координат не найден: {path}")
+        logging.warning("⚠ coords.csv не найден, используем fallback")
+        return [(55.7558, 37.6173), (40.7128, -74.0060)]
 
-    with open(path, newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            coords.append((float(row["lat"]), float(row["lon"])))
+    try:
+        with open(path, newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                coords.append((float(row["lat"]), float(row["lon"])))
+    except Exception as e:
+        logging.error(f"Ошибка чтения coords: {e}")
+        return [(55.7558, 37.6173)]
 
     if not coords:
-        raise ValueError("coords.csv пустой")
+        return [(55.7558, 37.6173)]
 
     return coords
 
@@ -49,122 +56,107 @@ COORDS = load_coords()
 # ================== УСТРОЙСТВА ==================
 
 DEVICES = [
-    {"make": "Apple", "model": "iPhone 13", "lens": "iPhone 13 camera", "focal": 26},
-    {"make": "Apple", "model": "iPhone 14 Pro", "lens": "iPhone 14 Pro camera", "focal": 24},
-    {"make": "samsung", "model": "SM-S911B", "lens": "Samsung S23 camera", "focal": 24},
-    {"make": "Xiaomi", "model": "Mi 11", "lens": "Mi 11 camera", "focal": 27},
+    ("Apple", "iPhone 13", 26),
+    ("Apple", "iPhone 14 Pro", 24),
+    ("samsung", "SM-S911B", 24),
+    ("Xiaomi", "Mi 11", 27),
 ]
 
 
-# ================== ВСПОМОГАТЕЛЬНОЕ ==================
+# ================== UTILS ==================
 
 def to_deg(value):
     abs_value = abs(value)
     deg = int(abs_value)
-    min_float = (abs_value - deg) * 60
-    minutes = int(min_float)
-    sec = round((min_float - minutes) * 60 * 100)
+    minutes = int((abs_value - deg) * 60)
+    seconds = int((((abs_value - deg) * 60) - minutes) * 60 * 100)
 
-    return ((deg, 1), (minutes, 1), (sec, 100))
+    return ((deg, 1), (minutes, 1), (seconds, 100))
 
 
 def random_datetime():
-    dt = datetime.now() - timedelta(
-        days=random.randint(0, 365),
-        hours=random.randint(0, 23),
-        minutes=random.randint(0, 59),
-        seconds=random.randint(0, 59),
-    )
+    dt = datetime.now() - timedelta(days=random.randint(0, 365))
     return dt.strftime("%Y:%m:%d %H:%M:%S")
 
 
 # ================== EXIF ==================
 
-def create_realistic_exif(lat, lon):
-    device = random.choice(DEVICES)
+def create_exif(lat, lon):
+    make, model, focal = random.choice(DEVICES)
     dt = random_datetime()
 
-    gps_ifd = {
-        piexif.GPSIFD.GPSLatitudeRef: b"N" if lat >= 0 else b"S",
-        piexif.GPSIFD.GPSLatitude: to_deg(lat),
-        piexif.GPSIFD.GPSLongitudeRef: b"E" if lon >= 0 else b"W",
-        piexif.GPSIFD.GPSLongitude: to_deg(lon),
-    }
-
-    zeroth_ifd = {
-        piexif.ImageIFD.Make: device["make"].encode(),
-        piexif.ImageIFD.Model: device["model"].encode(),
-        piexif.ImageIFD.DateTime: dt.encode(),
-    }
-
-    exif_ifd = {
-        piexif.ExifIFD.DateTimeOriginal: dt.encode(),
-        piexif.ExifIFD.ISOSpeedRatings: random.choice([100, 200, 400]),
-        piexif.ExifIFD.FocalLength: (device["focal"], 1),
-    }
-
     return {
-        "0th": zeroth_ifd,
-        "Exif": exif_ifd,
-        "GPS": gps_ifd,
-        "1st": {},
-        "thumbnail": None,
+        "0th": {
+            piexif.ImageIFD.Make: make.encode(),
+            piexif.ImageIFD.Model: model.encode(),
+            piexif.ImageIFD.DateTime: dt.encode(),
+        },
+        "Exif": {
+            piexif.ExifIFD.DateTimeOriginal: dt.encode(),
+            piexif.ExifIFD.ISOSpeedRatings: random.choice([100, 200, 400]),
+            piexif.ExifIFD.FocalLength: (focal, 1),
+        },
+        "GPS": {
+            piexif.GPSIFD.GPSLatitudeRef: b"N" if lat >= 0 else b"S",
+            piexif.GPSIFD.GPSLatitude: to_deg(lat),
+            piexif.GPSIFD.GPSLongitudeRef: b"E" if lon >= 0 else b"W",
+            piexif.GPSIFD.GPSLongitude: to_deg(lon),
+        },
     }
 
 
 # ================== ОБРАБОТКА ==================
 
-def process_image(raw_bytes: bytes) -> bytes:
-    img = Image.open(io.BytesIO(raw_bytes))
+def process_image(data: bytes) -> bytes:
+    try:
+        img = Image.open(io.BytesIO(data))
+    except Exception:
+        raise ValueError("Не удалось открыть изображение")
 
-    # Удаляем старый EXIF
     img = ImageOps.exif_transpose(img)
     img = img.convert("RGB")
 
-    # лёгкая обработка
-    img = ImageEnhance.Contrast(img).enhance(random.uniform(0.95, 1.05))
-
+    # шум
     arr = np.array(img).astype(np.int16)
-    noise = np.random.normal(0, 2, arr.shape)
-    arr = np.clip(arr + noise, 0, 255).astype(np.uint8)
+    arr += np.random.normal(0, 2, arr.shape)
+    arr = np.clip(arr, 0, 255).astype(np.uint8)
 
     img = Image.fromarray(arr)
 
     lat, lon = random.choice(COORDS)
-
-    exif_bytes = piexif.dump(create_realistic_exif(lat, lon))
+    exif = piexif.dump(create_exif(lat, lon))
 
     out = io.BytesIO()
-    img.save(out, format="JPEG", quality=90, exif=exif_bytes)
+    img.save(out, "JPEG", quality=90, exif=exif)
 
     return out.getvalue()
 
 
-# ================== TELEGRAM ==================
-
-def random_filename():
-    dt = datetime.now()
-    return f"IMG_{dt.strftime('%Y%m%d_%H%M%S')}.jpg"
-
+# ================== TG ==================
 
 @dp.message(CommandStart())
-async def start_handler(message: Message):
+async def start(message: Message):
     await message.answer("Пришли фото")
 
 
 @dp.message(F.photo | F.document)
-async def handler(message: Message):
-    file_id = message.photo[-1].file_id if message.photo else message.document.file_id
+async def handle(message: Message):
+    try:
+        file_id = message.photo[-1].file_id if message.photo else message.document.file_id
+        file = await bot.get_file(file_id)
 
-    tg_file = await bot.get_file(file_id)
-    buf = io.BytesIO()
-    await bot.download_file(tg_file.file_path, destination=buf)
+        buf = io.BytesIO()
+        await bot.download_file(file.file_path, buf)
 
-    processed = process_image(buf.getvalue())
+        result = process_image(buf.getvalue())
 
-    await message.answer_document(
-        BufferedInputFile(processed, filename=random_filename())
-    )
+        await message.answer_document(
+            BufferedInputFile(result, filename="image.jpg")
+        )
+
+    except Exception as e:
+        logging.exception("Ошибка обработки")
+        await message.answer("Ошибка обработки файла")
 
 
 async def main():
