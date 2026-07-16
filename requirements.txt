@@ -1,3 +1,0 @@
-pyTelegramBotAPI==4.15.4
-Pillow==10.3.0
-piexif==1.1.3
