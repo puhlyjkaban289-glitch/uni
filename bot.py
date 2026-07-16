@@ -4,16 +4,15 @@ import telebot
 import csv
 import random
 
+TOKEN = os.getenv("BOT_TOKEN")  # токен через Railway Variables
+bot = telebot.TeleBot(TOKEN)
+
 print("🔥 START FILE")
 
 TOKEN = os.getenv("BOT_TOKEN")
 
 if not TOKEN:
     raise Exception("❌ BOT_TOKEN не найден")
-
-
-TOKEN = os.getenv("BOT_TOKEN")  # токен через Railway Variables
-bot = telebot.TeleBot(TOKEN)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
