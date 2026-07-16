@@ -6,7 +6,7 @@ import sys
 import csv
 from datetime import datetime, timedelta
 
-from PIL import Image, ImageEnhance, ImageOps
+from PIL import Image, ImageOps
 import numpy as np
 import piexif
 
@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 if not BOT_TOKEN:
-    print("❌ TELEGRAM_BOT_TOKEN не задан")
+    print("❌ Нет TELEGRAM_BOT_TOKEN")
     sys.exit(1)
 
 bot = Bot(token=BOT_TOKEN)
@@ -32,69 +32,60 @@ def load_coords(path="coords.csv"):
     coords = []
 
     if not os.path.exists(path):
-        logging.warning("⚠ coords.csv не найден, используем fallback")
-        return [(55.7558, 37.6173), (40.7128, -74.0060)]
+        logging.warning("coords.csv не найден → fallback")
+        return [(55.7558, 37.6173)]
 
     try:
-        with open(path, newline="") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                coords.append((float(row["lat"]), float(row["lon"])))
+        with open(path) as f:
+            reader = csv.reader(f)
+            rows = list(reader)
+
+            # если есть заголовки
+            if rows and ("lat" in rows[0][0].lower()):
+                reader = csv.DictReader(open(path))
+                for row in reader:
+                    coords.append((float(row["lat"]), float(row["lon"])))
+            else:
+                for row in rows:
+                    if len(row) >= 2:
+                        coords.append((float(row[0]), float(row[1])))
+
     except Exception as e:
-        logging.error(f"Ошибка чтения coords: {e}")
+        logging.error(f"Ошибка coords: {e}")
         return [(55.7558, 37.6173)]
 
-    if not coords:
-        return [(55.7558, 37.6173)]
-
-    return coords
+    return coords if coords else [(55.7558, 37.6173)]
 
 
 COORDS = load_coords()
 
 
-# ================== УСТРОЙСТВА ==================
+# ================== EXIF ==================
 
-DEVICES = [
-    ("Apple", "iPhone 13", 26),
-    ("Apple", "iPhone 14 Pro", 24),
-    ("samsung", "SM-S911B", 24),
-    ("Xiaomi", "Mi 11", 27),
-]
-
-
-# ================== UTILS ==================
-
-def to_deg(value):
-    abs_value = abs(value)
-    deg = int(abs_value)
-    minutes = int((abs_value - deg) * 60)
-    seconds = int((((abs_value - deg) * 60) - minutes) * 60 * 100)
-
-    return ((deg, 1), (minutes, 1), (seconds, 100))
+def to_deg(val):
+    val = abs(val)
+    d = int(val)
+    m = int((val - d) * 60)
+    s = int((((val - d) * 60) - m) * 60 * 100)
+    return ((d, 1), (m, 1), (s, 100))
 
 
-def random_datetime():
+def random_dt():
     dt = datetime.now() - timedelta(days=random.randint(0, 365))
     return dt.strftime("%Y:%m:%d %H:%M:%S")
 
 
-# ================== EXIF ==================
-
 def create_exif(lat, lon):
-    make, model, focal = random.choice(DEVICES)
-    dt = random_datetime()
+    dt = random_dt()
 
     return {
         "0th": {
-            piexif.ImageIFD.Make: make.encode(),
-            piexif.ImageIFD.Model: model.encode(),
+            piexif.ImageIFD.Make: b"Apple",
+            piexif.ImageIFD.Model: b"iPhone 13",
             piexif.ImageIFD.DateTime: dt.encode(),
         },
         "Exif": {
             piexif.ExifIFD.DateTimeOriginal: dt.encode(),
-            piexif.ExifIFD.ISOSpeedRatings: random.choice([100, 200, 400]),
-            piexif.ExifIFD.FocalLength: (focal, 1),
         },
         "GPS": {
             piexif.GPSIFD.GPSLatitudeRef: b"N" if lat >= 0 else b"S",
@@ -108,17 +99,14 @@ def create_exif(lat, lon):
 # ================== ОБРАБОТКА ==================
 
 def process_image(data: bytes) -> bytes:
-    try:
-        img = Image.open(io.BytesIO(data))
-    except Exception:
-        raise ValueError("Не удалось открыть изображение")
-
+    img = Image.open(io.BytesIO(data))
     img = ImageOps.exif_transpose(img)
     img = img.convert("RGB")
 
-    # шум
-    arr = np.array(img).astype(np.int16)
-    arr += np.random.normal(0, 2, arr.shape)
+    # ✔ FIX numpy crash
+    arr = np.array(img).astype(np.float32)
+    noise = np.random.normal(0, 2, arr.shape).astype(np.float32)
+    arr = arr + noise
     arr = np.clip(arr, 0, 255).astype(np.uint8)
 
     img = Image.fromarray(arr)
@@ -136,7 +124,7 @@ def process_image(data: bytes) -> bytes:
 
 @dp.message(CommandStart())
 async def start(message: Message):
-    await message.answer("Пришли фото")
+    await message.answer("Отправь фото")
 
 
 @dp.message(F.photo | F.document)
@@ -155,8 +143,8 @@ async def handle(message: Message):
         )
 
     except Exception as e:
-        logging.exception("Ошибка обработки")
-        await message.answer("Ошибка обработки файла")
+        logging.exception("Ошибка")
+        await message.answer("Ошибка обработки")
 
 
 async def main():
