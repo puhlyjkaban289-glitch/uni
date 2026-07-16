@@ -4,6 +4,7 @@ import piexif
 from PIL import Image
 from io import BytesIO
 import random
+import csv
 
 TOKEN = os.getenv("BOT_TOKEN")  # токен через Railway Variables
 bot = telebot.TeleBot(TOKEN)
