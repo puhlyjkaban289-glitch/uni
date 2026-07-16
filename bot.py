@@ -39,7 +39,7 @@ BRANDS = {
 
 def load_coords():
     coords = []
-    with open(os.path.join(BASE_DIR, "coords(2).csv"), newline='', encoding='utf-8') as f:
+    with open(os.path.join(BASE_DIR, "coords.csv"), newline='', encoding='utf-8') as f:
         reader = csv.reader(f)
         for row in reader:
             if len(row) >= 2:
