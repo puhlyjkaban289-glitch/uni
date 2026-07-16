@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from typing import Tuple, List, Dict
 
 from dotenv import load_dotenv
-from PIL import Image
+from PIL import Image, ImageFilter
 import piexif
 from piexif import ImageIFD, ExifIFD, GPSIFD
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -30,6 +30,7 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
+from telegram.request import HTTPXRequest
 
 # ==================== КОНФИГ ====================
 load_dotenv()
@@ -107,19 +108,37 @@ def get_random_software(make: str) -> str:
 # ==================== УНИКАЛИЗАЦИЯ ====================
 def uniquify_image(img: Image.Image) -> Image.Image:
     """
-    Делает фото уникальным для компьютера, но незаметным для глаза.
-    Метод: лёгкое уменьшение + возврат к оригинальному размеру (LANCZOS).
-    Это создаёт микроскопические интерполяционные артефакты.
+    МАКСИМАЛЬНО сильная уникализация (двойной проход).
+    Каждый проход включает:
+    - Сильный ресайз (3%)
+    - Очень лёгкий Gaussian noise (sigma ≈ 0.9)
+    - Лёгкая резкость
+    Два прохода дают значительно более сильный эффект без видимых артефактов и чёрных полос.
     """
     if img.mode in ("RGBA", "P"):
         img = img.convert("RGB")
     w, h = img.size
-    # 0.5% уменьшение — почти незаметно даже при зуме 200%
-    new_w = max(10, int(w * 0.995))
-    new_h = max(10, int(h * 0.995))
-    img_small = img.resize((new_w, new_h), Image.LANCZOS)
-    img_unique = img_small.resize((w, h), Image.LANCZOS)
-    return img_unique
+
+    import numpy as np
+
+    for _ in range(2):  # ДВОЙНОЙ ПРОХОД
+        # 1. Сильное уменьшение (3%)
+        scale = 0.97
+        new_w = max(10, int(w * scale))
+        new_h = max(10, int(h * scale))
+        img = img.resize((new_w, new_h), Image.LANCZOS)
+        img = img.resize((w, h), Image.LANCZOS)
+
+        # 2. Очень лёгкий шум
+        arr = np.array(img).astype(np.float32)
+        noise = np.random.normal(0, 0.9, arr.shape)
+        arr = np.clip(arr + noise, 0, 255).astype(np.uint8)
+        img = Image.fromarray(arr)
+
+        # 3. Лёгкая резкость
+        img = img.filter(ImageFilter.UnsharpMask(radius=1, percent=115, threshold=2))
+
+    return img
 
 # ==================== ГЕНЕРАЦИЯ EXIF ====================
 def _deg_to_dms_rational(deg: float) -> List[Tuple[int, int]]:
@@ -400,9 +419,8 @@ def main() -> None:
     """Запуск бота"""
     logger.info("Запуск Telegram EXIF Spoofer Bot...")
 
-    # Улучшенный HTTPXRequest с повышенными таймаутами (решает TimedOut на Railway)
-    from telegram.request import HTTPXRequest
-
+    # Улучшенный HTTPXRequest с повышенными таймаутами и большим пулом соединений.
+    # Это критично для Railway (холодный старт + переменная сеть) и решает TimedOut ошибки.
     request = HTTPXRequest(
         connection_pool_size=20,
         connect_timeout=60.0,
