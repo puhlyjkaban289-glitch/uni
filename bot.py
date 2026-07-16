@@ -46,8 +46,20 @@ async def handler(message: Message):
     buf = io.BytesIO()
     await bot.download_file(file.file_path, buf)
 
-    result = apply_exif(buf.getvalue())
+   import random
 
+def get_random_coords():
+    coords = []
+    with open("coords.csv", encoding="utf-8") as f:
+        for line in f:
+            lat, lon = line.strip().split(",")
+            coords.append((float(lat), float(lon)))
+    return random.choice(coords)
+
+
+lat, lon = get_random_coords()
+
+result = apply_exif(buf.getvalue(), lat, lon)
     await message.answer_document(
         BufferedInputFile(result, filename="IMG_0001.JPG")
     )
