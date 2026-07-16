@@ -1,52 +1,21 @@
-# -*- coding: utf-8 -*-
-import io
 import logging
-import os
-import sys
+import random
+from io import BytesIO
+
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import Message
+from aiogram.utils import executor
 
 from PIL import Image
-from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, BufferedInputFile
-from aiogram.filters import CommandStart
-
 from exif_utils import generate_exif
+
+API_TOKEN = "YOUR_BOT_TOKEN"
 
 logging.basicConfig(level=logging.INFO)
 
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-if not BOT_TOKEN:
-    sys.exit("Íåò òîêåíà")
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher(bot)
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
-
-
-def apply_exif(image_bytes: bytes) -> bytes:
-    img = Image.open(io.BytesIO(image_bytes))
-    img = img.convert("RGB")
-
-    exif_bytes = generate_exif()
-
-    out = io.BytesIO()
-    img.save(out, "JPEG", quality=95, exif=exif_bytes)
-
-    return out.getvalue()
-
-
-@dp.message(CommandStart())
-async def start(message: Message):
-    await message.answer("Îòïðàâü ôîòî")
-
-
-@dp.message(F.photo | F.document)
-async def handler(message: Message):
-    file_id = message.photo[-1].file_id if message.photo else message.document.file_id
-
-    file = await bot.get_file(file_id)
-    buf = io.BytesIO()
-    await bot.download_file(file.file_path, buf)
-
-   import random
 
 def get_random_coords():
     coords = []
@@ -57,18 +26,36 @@ def get_random_coords():
     return random.choice(coords)
 
 
-lat, lon = get_random_coords()
+def apply_exif(image_bytes, lat, lon):
+    import piexif
 
-result = apply_exif(buf.getvalue(), lat, lon)
-    await message.answer_document(
-        BufferedInputFile(result, filename="IMG_0001.JPG")
-    )
+    image = Image.open(BytesIO(image_bytes))
+
+    exif_bytes = generate_exif(lat, lon)
+
+    output = BytesIO()
+    image.save(output, format="JPEG", exif=exif_bytes)
+
+    return output.getvalue()
 
 
-async def main():
-    await dp.start_polling(bot)
+@dp.message_handler(content_types=['photo'])
+async def handler(message: Message):
+    photo = message.photo[-1]
+
+    file = await bot.get_file(photo.file_id)
+    file_path = file.file_path
+
+    downloaded = await bot.download_file(file_path)
+
+    image_bytes = downloaded.read()
+
+    lat, lon = get_random_coords()
+
+    result = apply_exif(image_bytes, lat, lon)
+
+    await message.answer_photo(result)
 
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    executor.start_polling(dp, skip_updates=True)
