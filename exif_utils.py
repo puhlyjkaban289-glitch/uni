@@ -1,92 +1,72 @@
-import csv
+# -*- coding: utf-8 -*-
+
 import os
 import random
-from datetime import datetime, timedelta
+import csv
 import piexif
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# ================== LOAD DEVICES ==================
 
-def load_devices():
-    base = "devices"
+def load_device():
+    devices_dir = os.path.join(BASE_DIR, "devices")
+
+    if not os.path.exists(devices_dir):
+        raise FileNotFoundError("devices folder not found")
+
+    files = [f for f in os.listdir(devices_dir) if f.endswith(".csv")]
+
+    if not files:
+        raise ValueError("no csv files in devices folder")
+
+    file = random.choice(files)
+    path = os.path.join(devices_dir, file)
+
     devices = []
 
-    for file in os.listdir(base):
-        if file.endswith(".csv"):
-            with open(os.path.join(base, file)) as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    devices.append(row)
+    with open(path, newline='', encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            manufacturer = row.get("manufacturer")
+            model = row.get("model")
+
+            if not manufacturer or not model:
+                continue
+
+            devices.append((manufacturer, model))
 
     if not devices:
-        raise ValueError("Нет устройств")
+        raise ValueError("device list is empty")
 
-    return devices
-
-
-DEVICES = load_devices()
+    return random.choice(devices)
 
 
-# ================== COORDS ==================
+def deg_to_dms(deg):
+    d = int(deg)
+    m = int((deg - d) * 60)
+    s = round((deg - d - m / 60) * 3600 * 100)
 
-def load_coords(path="coords.csv"):
-    coords = []
-    with open(path) as f:
-        for row in csv.reader(f):
-            if len(row) >= 2:
-                coords.append((float(row[0]), float(row[1])))
-    return coords
-
-
-COORDS = load_coords()
-
-
-# ================== HELPERS ==================
-
-def to_deg(val):
-    val = abs(val)
-    d = int(val)
-    m = int((val - d) * 60)
-    s = int((((val - d) * 60) - m) * 60 * 100)
     return ((d, 1), (m, 1), (s, 100))
 
 
-def random_datetime():
-    dt = datetime.now() - timedelta(
-        days=random.randint(0, 365),
-        seconds=random.randint(0, 86400),
-    )
-    return dt.strftime("%Y:%m:%d %H:%M:%S")
+def generate_exif(lat, lon):
+    manufacturer, model = load_device()
 
+    zeroth_ifd = {
+        piexif.ImageIFD.Make: manufacturer.encode(),
+        piexif.ImageIFD.Model: model.encode(),
+    }
 
-# ================== EXIF ==================
-
-def generate_exif():
-    device = random.choice(DEVICES)
-    lat, lon = random.choice(COORDS)
-
-    dt = random_datetime()
+    gps_ifd = {
+        piexif.GPSIFD.GPSLatitudeRef: b'N' if lat >= 0 else b'S',
+        piexif.GPSIFD.GPSLatitude: deg_to_dms(abs(lat)),
+        piexif.GPSIFD.GPSLongitudeRef: b'E' if lon >= 0 else b'W',
+        piexif.GPSIFD.GPSLongitude: deg_to_dms(abs(lon)),
+    }
 
     exif_dict = {
-        "0th": {
-            piexif.ImageIFD.Make: device["make"].encode(),
-            piexif.ImageIFD.Model: device["model"].encode(),
-            piexif.ImageIFD.Software: device["software"].encode(),
-            piexif.ImageIFD.DateTime: dt.encode(),
-        },
-        "Exif": {
-            piexif.ExifIFD.DateTimeOriginal: dt.encode(),
-            piexif.ExifIFD.DateTimeDigitized: dt.encode(),
-            piexif.ExifIFD.LensModel: device["lens"].encode(),
-            piexif.ExifIFD.ISOSpeedRatings: random.choice([50, 100, 200]),
-            piexif.ExifIFD.FocalLength: (42, 10),
-        },
-        "GPS": {
-            piexif.GPSIFD.GPSLatitudeRef: b"N" if lat >= 0 else b"S",
-            piexif.GPSIFD.GPSLatitude: to_deg(lat),
-            piexif.GPSIFD.GPSLongitudeRef: b"E" if lon >= 0 else b"W",
-            piexif.GPSIFD.GPSLongitude: to_deg(lon),
-        },
+        "0th": zeroth_ifd,
+        "GPS": gps_ifd,
     }
 
     return piexif.dump(exif_dict)
