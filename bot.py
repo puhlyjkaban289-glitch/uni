@@ -84,8 +84,52 @@ def load_devices() -> List[Dict[str, str]]:
     logger.info(f"Загружено {len(devices)} моделей устройств")
     return devices
 
+def load_surnames() -> List[str]:
+    """Загружает русские фамилии"""
+    path = os.path.join(DATA_DIR, "russian_surnames.csv")
+    surnames = []
+    with open(path, encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            s = row.get("фамилия", "").strip()
+            if s:
+                surnames.append(s)
+    logger.info(f"Загружено {len(surnames)} фамилий")
+    return surnames
+
+def load_cities() -> List[str]:
+    """Загружает города"""
+    path = os.path.join(DATA_DIR, "russian_cities_200k_1m.csv")
+    cities = []
+    with open(path, encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            c = row.get("город", "").strip()
+            if c:
+                cities.append(c)
+    logger.info(f"Загружено {len(cities)} городов")
+    return cities
+
+def load_user_agents() -> List[Dict[str, str]]:
+    """Загружает user-agent + MAC + device_name"""
+    path = os.path.join(DATA_DIR, "user_agents_mac_devices.csv")
+    items = []
+    with open(path, encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            ua = row.get("user_agent", "").strip()
+            mac = row.get("mac_address", "").strip()
+            name = row.get("device_name", "").strip()
+            if ua and mac and name:
+                items.append({"ua": ua, "mac": mac, "name": name})
+    logger.info(f"Загружено {len(items)} user-agent/MAC/устройств")
+    return items
+
 COORDS: List[Tuple[float, float]] = load_coords()
 DEVICES: List[Dict[str, str]] = load_devices()
+SURNAMES: List[str] = load_surnames()
+CITIES: List[str] = load_cities()
+USER_AGENTS: List[Dict[str, str]] = load_user_agents()
 
 # Типичные версии ПО по брендам (для реализма)
 SOFTWARE_VERSIONS = {
@@ -108,12 +152,11 @@ def get_random_software(make: str) -> str:
 # ==================== УНИКАЛИЗАЦИЯ ====================
 def uniquify_image(img: Image.Image) -> Image.Image:
     """
-    МАКСИМАЛЬНО сильная уникализация (двойной проход).
-    Каждый проход включает:
-    - Сильный ресайз (3%)
-    - Очень лёгкий Gaussian noise (sigma ≈ 0.9)
+    Вариант A — усиленная уникализация (двойной проход).
+    - Более сильный ресайз (6%)
+    - Более сильный Gaussian noise (sigma=1.4)
     - Лёгкая резкость
-    Два прохода дают значительно более сильный эффект без видимых артефактов и чёрных полос.
+    Без чёрных полос, изменения почти незаметны глазу.
     """
     if img.mode in ("RGBA", "P"):
         img = img.convert("RGB")
@@ -122,21 +165,21 @@ def uniquify_image(img: Image.Image) -> Image.Image:
     import numpy as np
 
     for _ in range(2):  # ДВОЙНОЙ ПРОХОД
-        # 1. Сильное уменьшение (3%)
-        scale = 0.97
+        # 1. Более сильное уменьшение (6%)
+        scale = 0.94
         new_w = max(10, int(w * scale))
         new_h = max(10, int(h * scale))
         img = img.resize((new_w, new_h), Image.LANCZOS)
         img = img.resize((w, h), Image.LANCZOS)
 
-        # 2. Очень лёгкий шум
+        # 2. Более сильный шум (всё ещё почти невидимый)
         arr = np.array(img).astype(np.float32)
-        noise = np.random.normal(0, 0.9, arr.shape)
+        noise = np.random.normal(0, 1.4, arr.shape)
         arr = np.clip(arr + noise, 0, 255).astype(np.uint8)
         img = Image.fromarray(arr)
 
         # 3. Лёгкая резкость
-        img = img.filter(ImageFilter.UnsharpMask(radius=1, percent=115, threshold=2))
+        img = img.filter(ImageFilter.UnsharpMask(radius=1, percent=120, threshold=2))
 
     return img
 
@@ -240,12 +283,13 @@ def create_fake_exif(make: str, model: str, lat: float, lon: float) -> bytes:
         return piexif.dump(minimal)
 
 # ==================== ОБРАБОТКА ФОТО ====================
-def process_photo(file_bytes: bytes) -> Tuple[bytes, Dict, str]:
+def process_photo(file_bytes: bytes, mirror: bool = True) -> Tuple[bytes, Dict, str]:
     """
     Основная функция обработки:
-    - Уникализация
+    - Зеркалирование (опционально)
+    - Уникализация (Вариант A)
     - Генерация нового EXIF с случайными координатами и устройством
-    - Возврат JPEG-байтов + метаданные для подписи
+    - Возврат JPEG-байтов + метаданные для подписи + имя файла
     """
     # Выбираем случайное устройство и координаты
     device = random.choice(DEVICES)
@@ -255,6 +299,10 @@ def process_photo(file_bytes: bytes) -> Tuple[bytes, Dict, str]:
 
     # Открываем изображение
     img = Image.open(io.BytesIO(file_bytes))
+
+    # Зеркалирование (по умолчанию включено)
+    if mirror:
+        img = img.transpose(Image.FLIP_LEFT_RIGHT)
 
     # Уникализируем (изменяем пиксели незаметно)
     img = uniquify_image(img)
@@ -331,12 +379,48 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="HTML")
 
+def get_user_settings(context: ContextTypes.DEFAULT_TYPE) -> dict:
+    """Возвращает настройки пользователя (с дефолтами)"""
+    defaults = {
+        "mirror": True,          # Зеркало по умолчанию ВКЛ
+        "add_city": False,
+        "add_surname": False,
+        "add_ua": False,         # User-Agent + MAC + Device
+    }
+    if "settings" not in context.user_data:
+        context.user_data["settings"] = defaults.copy()
+    # Подстраховка от старых ключей
+    for k, v in defaults.items():
+        if k not in context.user_data["settings"]:
+            context.user_data["settings"][k] = v
+    return context.user_data["settings"]
+
+
+def build_settings_keyboard(settings: dict) -> InlineKeyboardMarkup:
+    """Строит клавиатуру настроек с текущим состоянием"""
+    def btn(text, key):
+        status = "✅" if settings.get(key) else "❌"
+        return InlineKeyboardButton(f"{status} {text}", callback_data=f"toggle_{key}")
+
+    keyboard = [
+        [btn("Зеркало фото", "mirror")],
+        [btn("Случайный город", "add_city")],
+        [btn("Случайная фамилия", "add_surname")],
+        [btn("UA + MAC + Устройство", "add_ua")],
+        [InlineKeyboardButton("« Назад", callback_data="back_to_start")],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработка inline-кнопок"""
     query = update.callback_query
     await query.answer()
 
-    if query.data == "howto":
+    data = query.data
+    settings = get_user_settings(context)
+
+    if data == "howto":
         await query.edit_message_text(
             "📸 <b>Как обработать фото:</b>\n\n"
             "1. Просто отправь мне фотографию (не как документ)\n"
@@ -345,32 +429,69 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             "Готово! Теперь фото выглядит так, будто его сняли в другом месте и на другом телефоне.",
             parse_mode="HTML",
         )
-    elif query.data == "about":
+    elif data == "about":
         await query.edit_message_text(
             "🧠 <b>Как это работает технически:</b>\n\n"
             "1. Удаляем все оригинальные EXIF-теги\n"
-            "2. Выбираем случайную модель из базы (Apple iPhone 11-15, Samsung S23/S24, Pixel 5-8, Redmi Note)\n"
-            "3. Берём случайные координаты из ~500 точек (Россия, Сибирь, Арктика и др.)\n"
-            "4. Генерируем полный набор EXIF: ExposureTime, ISO, FocalLength, Software, Lens и т.д.\n"
-            "5. Делаем уникализацию через микроскопический ресайз (LANCZOS) — меняются пиксели, но визуально фото идентично\n"
-            "6. Сохраняем JPEG 94% качества с новым EXIF\n\n"
-            "Результат невозможно отличить от настоящего снимка с указанного телефона в указанной локации.",
+            "2. Выбираем случайную модель из большой базы (Apple, Samsung, Google, Xiaomi, Huawei...)\n"
+            "3. Берём случайные координаты из ~500 точек\n"
+            "4. Генерируем полный набор EXIF\n"
+            "5. Делаем сильную уникализацию (Вариант A: ресайз + шум + резкость ×2)\n"
+            "6. При желании зеркалим фото и добавляем данные в подпись\n"
+            "7. Отправляем как файл, чтобы EXIF не стёрся",
             parse_mode="HTML",
         )
-    elif query.data == "settings":
-        await query.edit_message_text(
-            "🛠 <b>Настройки (пока в разработке)</b>\n\n"
-            "Сейчас бот работает полностью автоматически:\n"
-            "• Случайное устройство каждый раз\n"
-            "• Случайные координаты\n\n"
-            "В ближайшем обновлении появится:\n"
-            "• Выбор любимого бренда (только Apple / только Samsung и т.д.)\n"
-            "• Фиксированные координаты или регион\n"
-            "• Сохранение предпочтений пользователя\n\n"
-            "Хочешь конкретную фичу — напиши @твой_юзернейм",
-            parse_mode="HTML",
+    elif data == "settings":
+        text = (
+            "🛠 <b>Настройки</b>\n\n"
+            "Нажми на кнопку, чтобы включить/выключить:\n\n"
+            "• <b>Зеркало</b> — отражает фото по горизонтали (по умолчанию ВКЛ)\n"
+            "• <b>Город</b> — добавляет случайный город в подпись\n"
+            "• <b>Фамилия</b> — добавляет случайную русскую фамилию\n"
+            "• <b>UA + MAC + Устройство</b> — добавляет User-Agent, MAC-адрес и имя устройства\n\n"
+            "Все дополнительные данные выводятся в <code>моноширинном</code> шрифте — удобно копировать."
         )
-    elif query.data == "help":
+        await query.edit_message_text(text, reply_markup=build_settings_keyboard(settings), parse_mode="HTML")
+
+    elif data.startswith("toggle_"):
+        key = data.replace("toggle_", "")
+        if key in settings:
+            settings[key] = not settings[key]
+            context.user_data["settings"] = settings
+        # Обновляем меню
+        text = (
+            "🛠 <b>Настройки</b>\n\n"
+            "Нажми на кнопку, чтобы включить/выключить:\n\n"
+            "• <b>Зеркало</b> — отражает фото по горизонтали (по умолчанию ВКЛ)\n"
+            "• <b>Город</b> — добавляет случайный город в подпись\n"
+            "• <b>Фамилия</b> — добавляет случайную русскую фамилию\n"
+            "• <b>UA + MAC + Устройство</b> — добавляет User-Agent, MAC-адрес и имя устройства\n\n"
+            "Все дополнительные данные выводятся в <code>моноширинном</code> шрифте — удобно копировать."
+        )
+        await query.edit_message_text(text, reply_markup=build_settings_keyboard(settings), parse_mode="HTML")
+
+    elif data == "back_to_start":
+        # Возвращаем в главное меню
+        keyboard = [
+            [InlineKeyboardButton("📸 Отправь фото — я обработаю", callback_data="howto")],
+            [
+                InlineKeyboardButton("ℹ️ Как это работает", callback_data="about"),
+                InlineKeyboardButton("🛠 Настройки", callback_data="settings"),
+            ],
+            [InlineKeyboardButton("❓ Помощь", callback_data="help")],
+        ]
+        text = (
+            "👋 <b>Привет!</b> Я — бот для приватности и «свежести» фотографий.\n\n"
+            "Что я умею:\n"
+            "• Полностью удаляю оригинальные EXIF-данные\n"
+            "• Подменяю координаты и модель телефона\n"
+            "• Делаю сильную уникализацию фото\n"
+            "• Могу зеркалить и добавлять город/фамилию/UA в подпись\n\n"
+            "Просто <b>отправь мне любое фото</b> 📸"
+        )
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+
+    elif data == "help":
         await query.edit_message_text(
             "❓ <b>Помощь</b>\n\n"
             "/start — главное меню\n"
@@ -378,9 +499,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             "<b>Что меняется:</b>\n"
             "• Полностью новый EXIF (включая GPS)\n"
             "• Новая модель телефона\n"
-            "• Уникальные пиксели (защита от duplicate detection)\n\n"
-            "Фото не сохраняется на сервере. Обработка в оперативной памяти.\n\n"
-            "Если что-то пошло не так — попробуй ещё раз или пришли скриншот ошибки.",
+            "• Уникальные пиксели (защита от duplicate detection)\n"
+            "• Зеркало (можно выключить в настройках)\n"
+            "• Опционально: город, фамилия, User-Agent/MAC\n\n"
+            "Фото не сохраняется на сервере. Обработка в оперативной памяти.",
             parse_mode="HTML",
         )
 
@@ -399,22 +521,45 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         file = await context.bot.get_file(photo.file_id)
         file_bytes = await file.download_as_bytearray()
 
-        # Обрабатываем (синхронно, т.к. быстро)
-        processed_bytes, meta, filename = process_photo(bytes(file_bytes))
+        # Настройки пользователя
+        settings = get_user_settings(context)
+        mirror = settings.get("mirror", True)
+
+        # Обрабатываем
+        processed_bytes, meta, filename = process_photo(bytes(file_bytes), mirror=mirror)
 
         # Готовим подпись
-        caption = (
-            f"✅ <b>Фото успешно обработано!</b>\n\n"
-            f"📱 <b>Устройство:</b> {meta['make']} {meta['model']}\n"
-            f"📍 <b>Координаты:</b> {meta['lat']}, {meta['lon']}\n"
-            f"🕒 <b>Дата EXIF:</b> (сгенерирована недавно)\n"
-            f"🔧 <b>Software:</b> {meta['software']}\n\n"
-            f"📎 Отправлено как файл, чтобы сохранить EXIF-метаданные\n"
-            f"🔒 Оригинальные EXIF удалены • Фото уникализировано"
-        )
+        caption_parts = [
+            f"✅ <b>Фото успешно обработано!</b>\n",
+            f"📱 <b>Устройство:</b> {meta['make']} {meta['model']}",
+            f"📍 <b>Координаты:</b> {meta['lat']}, {meta['lon']}",
+            f"🔧 <b>Software:</b> {meta['software']}",
+        ]
 
-        # Отправляем как документ (файл), а не как фото —
-        # Telegram не будет пересжимать и стирать наш поддельный EXIF
+        if mirror:
+            caption_parts.append("🪞 <b>Зеркало:</b> включено")
+
+        # Дополнительные данные (в моноширинном шрифте для удобного копирования)
+        if settings.get("add_city") and CITIES:
+            city = random.choice(CITIES)
+            caption_parts.append(f"🏙 <b>Город:</b> <code>{city}</code>")
+
+        if settings.get("add_surname") and SURNAMES:
+            surname = random.choice(SURNAMES)
+            caption_parts.append(f"👤 <b>Фамилия:</b> <code>{surname}</code>")
+
+        if settings.get("add_ua") and USER_AGENTS:
+            ua_item = random.choice(USER_AGENTS)
+            caption_parts.append(f"📱 <b>User-Agent:</b>\n<code>{ua_item['ua']}</code>")
+            caption_parts.append(f"🔗 <b>MAC:</b> <code>{ua_item['mac']}</code>")
+            caption_parts.append(f"💻 <b>Устройство:</b> <code>{ua_item['name']}</code>")
+
+        caption_parts.append("\n📎 Отправлено как файл (EXIF сохранён)")
+        caption_parts.append("🔒 Оригинальные EXIF удалены • Уникализация (Вариант A)")
+
+        caption = "\n".join(caption_parts)
+
+        # Отправляем как документ
         await message.reply_document(
             document=io.BytesIO(processed_bytes),
             filename=filename,
@@ -424,14 +569,15 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
         logger.info(
             f"Обработано фото для пользователя {message.from_user.id} "
-            f"→ {meta['make']} {meta['model']} @ {meta['lat']},{meta['lon']}"
+            f"→ {meta['make']} {meta['model']} @ {meta['lat']},{meta['lon']} "
+            f"(mirror={mirror})"
         )
 
     except Exception as e:
         logger.error(f"Ошибка обработки фото: {e}", exc_info=DEBUG)
         await message.reply_text(
             "😕 Произошла ошибка при обработке. Попробуй ещё раз или пришли фото поменьше.\n\n"
-            f"Техническая информация: <code>{str(e)[:100]}</code>",
+            f"Техническая информация: <code>{str(e)[:150]}</code>",
             parse_mode="HTML",
         )
 
